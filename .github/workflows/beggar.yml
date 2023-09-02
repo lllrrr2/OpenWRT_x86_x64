@@ -6,7 +6,7 @@
 # Blog: https://p3terx.com
 #=================================================
 
-name: x86-x64-docker-FusionWRT
+name: x86-x64-乞丐版
 
 on:
   repository_dispatch:
@@ -17,9 +17,9 @@ on:
   #   types: started
 
 env:
-  REPO_URL: https://github.com/coolsnowwolf/lede
-  REPO_BRANCH: master
-  CONFIG_FILE: configs/lean/lean_docker.config
+  REPO_URL: https://github.com/DHDAXCW/lede-rockchip
+  REPO_BRANCH: stable
+  CONFIG_FILE: configs/lean/lean_beggar.config
   DIY_SH: scripts/lean.sh
   KMODS_IN_FIRMWARE: true
   UPLOAD_RELEASE: true
@@ -38,22 +38,21 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@main
+      uses: actions/checkout@v3
         
     - name: Clone Source Code
       run: |
         df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
-
     - name: Update Feeds
       id: update
       run: |
         cd openwrt
         echo "OPENWRTROOT=$PWD" >> $GITHUB_ENV
-        echo "::set-output name=OPENWRTROOT::$(echo $PWD)"
+        echo "OPENWRTROOT=$PWD" >> $GITHUB_OUTPUT
         mkdir customfeeds
-        git clone --depth=1 https://github.com/coolsnowwolf/packages customfeeds/packages
-        git clone --depth=1 https://github.com/coolsnowwolf/luci customfeeds/luci
+        git clone --depth=1 https://github.com/DHDAXCW/packages customfeeds/packages
+        git clone --depth=1 https://github.com/DHDAXCW/luci customfeeds/luci
         chmod +x ../scripts/*.sh
         ../scripts/hook-feeds.sh
 
@@ -69,6 +68,7 @@ jobs:
         chmod +x scripts/*.sh
         cd $OPENWRTROOT
         ../$DIY_SH
+        ../scripts/preset-clash-core.sh amd64
         ../scripts/preset-terminal-tools.sh
         make defconfig
         
@@ -77,7 +77,7 @@ jobs:
       run: |
         cd $OPENWRTROOT
         cat .config
-        make download -j8
+        make download -j50
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
   
@@ -86,27 +86,27 @@ jobs:
       run: |
         cd $OPENWRTROOT
         echo -e "$(nproc) thread compile"
-        make tools/compile -j$(nproc) || make tools/compile -j72
-        make toolchain/compile -j$(nproc) || make toolchain/compile -j72
-        make target/compile -j$(nproc) || make target/compile -j72 IGNORE_ERRORS=1
+        make tools/compile -j$(nproc) || make tools/compile -j$(nproc)
+        make toolchain/compile -j$(nproc) || make toolchain/compile -j$(nproc)
+        make target/compile -j$(nproc) || make target/compile -j$(nproc) IGNORE_ERRORS=1
         make diffconfig
-        make package/compile -j$(nproc) IGNORE_ERRORS=1 || make package/compile -j72 IGNORE_ERRORS=1
+        make package/compile -j$(nproc) IGNORE_ERRORS=1 || make package/compile -j$(nproc) IGNORE_ERRORS=1
         make package/index
         cd $OPENWRTROOT/bin/packages/*
         PLATFORM=$(basename `pwd`)
         echo "PLATFORM=$PLATFORM" >> $GITHUB_ENV
-        echo "::set-output name=PLATFORM::$(echo $PLATFORM)"
+        echo "PLATFORM=$PLATFORM" >> $GITHUB_OUTPUT
         cd $OPENWRTROOT/bin/targets/*
         TARGET=$(basename `pwd`)
         echo "TARGET=$TARGET" >> $GITHUB_ENV
-        echo "::set-output name=TARGET::$(echo $TARGET)"
+        echo "TARGET=$TARGET" >> $GITHUB_OUTPUT
         cd *
         SUBTARGET=$(basename `pwd`)
         echo "SUBTARGET=$SUBTARGET" >> $GITHUB_ENV
-        echo "::set-output name=SUBTARGET::$(echo $SUBTARGET)"
+        echo "SUBTARGET=$SUBTARGET" >> $GITHUB_OUTPUT
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "::set-output name=FIRMWARE::$(echo $PWD)"
-        echo "::set-output name=COMPILE_STATUS::success"
+        echo "FIRMWARE=$PWD" >> $GITHUB_OUTPUT
+        echo "COMPILE_STATUS=success" >> $GITHUB_OUTPUT
         
     - name: Generate Firmware
       if: steps.compile.outputs.COMPILE_STATUS == 'success'
@@ -133,22 +133,33 @@ jobs:
         sed -i "s/http:\/\/192.168.123.100:2345\/snapshots/https:\/\/openwrt.cc\/snapshots\/$(date +"%Y-%m-%d")\/lean/g" files/etc/opkg/distfeeds.conf.mirror
         make package/install -j$(nproc) || make package/install -j1 V=s
         make target/install -j$(nproc) || make target/install -j1 V=s
-        rm -rf bin/targets/x86/64/openwrt-x86-64-generic-kernel.bin
-        rm -rf bin/targets/x86/64/openwrt-x86-64-generic-rootfs.tar.gz
-        rm -rf bin/targets/x86/64/openwrt-x86-64-generic-squashfs-combined-efi.vmdk
-        rm -rf bin/targets/x86/64/openwrt-x86-64-generic.manifest
+        pushd bin/targets/x86/64
+        kernelv=`cat openwrt-x86-64-generic.manifest | grep 'kernel - ' |  awk -F '[- ]' '{print $4}'`
+        echo "kernel_version=$kernelv" >> $GITHUB_OUTPUT
+        rm -rf openwrt-x86-64-generic-kernel.bin
+        rm -rf openwrt-x86-64-generic-rootfs.tar.gz
+        rm -rf openwrt-x86-64-generic-squashfs-rootfs.img.gz
+        rm -rf openwrt-x86-64-generic-squashfs-combined-efi.vmdk
+        rm -rf openwrt-x86-64-generic.manifest
+        mv openwrt-x86-64-generic-squashfs-combined-efi.img.gz beggar-x86-64-squashfs-efi.img.gz
+        popd
         make checksum
-        echo "::set-output name=GENERATE_STATUS::success"
+        mv bin/targets/x86/64/sha256sums bin/targets/x86/64/beggar-sha256sums
+        echo "GENERATE_STATUS=success" >> $GITHUB_OUTPUT
 
     - name: Generate release tag
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-          echo "::set-output name=release_tag::$(date +"%Y.%m.%d")-Lean2"
-          echo "::set-output name=release_date::$(date +"%Y.%m.%d")"
+          echo "release_tag=$(date +"%Y.%m.%d")-Lean3" >> $GITHUB_OUTPUT
+          echo "release_date=$(date +"%Y.%m.%d")" >> $GITHUB_OUTPUT
           touch release.txt
-          echo "后台地址：192.168.11.1" >> release.txt
-          echo "::set-output name=status::success"
+          echo "后台地址：192.168.11.1
+                full   = 全插件
+                docker = 带docker
+                slim   = 精简版
+                beggar = 乞丐版" >> release.txt
+          echo "status=success" >> $GITHUB_OUTPUT
           
     - name: Upload firmware to release
       uses: softprops/action-gh-release@v1
@@ -156,19 +167,19 @@ jobs:
       env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-          name: ${{ steps.tag.outputs.release_date }} x86-64-Linux-5.19_Docker版_全插件
+          name: ${{ steps.tag.outputs.release_date }} x86-64-Linux-${{ steps.generate.outputs.kernel_version }} 固件
           tag_name: ${{ steps.tag.outputs.release_tag }}
           body_path: release.txt
           files: ${{ env.FIRMWARE }}/*
 
     - name: Delete workflow runs
-      uses: GitRML/delete-workflow-runs@main
+      uses: Mattraks/delete-workflow-runs@v2
       with:
           retain_days: 1
           keep_minimum_runs: 1
 
     - name: Remove old Releases
-      uses: dev-drprasad/delete-older-releases@v0.1.0
+      uses: dev-drprasad/delete-older-releases@v0.2.1
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       with:
           keep_latest: 20
@@ -177,7 +188,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Delete Artifacts
-      uses: geekyeggo/delete-artifact@v1
+      uses: geekyeggo/delete-artifact@v2
       with:
-          name: |
+         name: |
             bin-archive
